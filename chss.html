@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZenChess — Minimalist Chess</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        notion: {
+                            bg: '#FFFFFF',
+                            text: '#37352F',
+                            lightGray: '#F7F6F3',
+                            border: '#E9E9E6',
+                            dark: '#191919'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Efek Liquid Glass (Glassmorphism) */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.04);
+        }
+        
+        /* Tema Papan Catur Transparan */
+        .square-light {
+            background-color: rgba(247, 246, 243, 0.6); /* Notion Light Gray Transparan */
+        }
+        .square-dark {
+            background-color: rgba(233, 233, 230, 0.8); /* Notion Border/Gray Transparan */
+        }
+        
+        /* Highlight untuk petak terpilih dan langkah terakhir */
+        .square-selected {
+            background-color: rgba(232, 245, 233, 0.8) !important;
+            box-shadow: inset 0 0 0 2px #4CAF50;
+        }
+        .square-candidate::after {
+            content: '';
+            display: block;
+            width: 24%;
+            height: 24%;
+            background-color: rgba(0, 0, 0, 0.15);
+            border-radius: 50%;
+            margin: 38%;
+        }
+        .square-candidate-capture {
+            box-shadow: inset 0 0 0 4px rgba(255, 0, 0, 0.2);
+        }
+
+        /* Animasi transisi bidak dan rotasi board */
+        .piece {
+            transition: transform 0.2s ease-in-out;
+            cursor: grab;
+            user-select: none;
+        }
+        .piece:active { cursor: grabbing; }
+        .flipped {
+            transform: rotate(180deg);
+        }
+        .flipped .piece {
+            transform: rotate(180deg);
+        }
+    </style>
+</head>
+<body class="bg-notion-lightGray text-notion-text min-h-screen flex flex-col justify-center items-center p-4 selection:bg-neutral-200">
+
+    <div class="w-full max-w-lg flex flex-col gap-4 items-center">
+        
+        <div class="glass-panel w-full rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-sm z-10">
+            <div class="flex items-center gap-2">
+                <span class="font-semibold tracking-tight text-notion-dark">ZenChess</span>
+                <span class="text-xs text-neutral-400">v1.0</span>
+            </div>
+            
+            <div class="flex items-center gap-1 bg-neutral-200/50 p-0.5 rounded-lg text-xs">
+                <span class="px-3 py-1.5 rounded-md font-medium bg-white text-notion-dark shadow-sm">Offline PvP</span>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button id="btn-flip" class="p-1.5 hover:bg-white/60 rounded-lg transition-colors" title="Putar Papan">
+                    <svg class="w-4 h-4 text-neutral-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.253 8H18"></path></svg>
+                </button>
+                <button id="btn-reset" class="p-1.5 hover:bg-white/60 rounded-lg transition-colors text-red-500" title="Reset Game">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <div id="pvp-options" class="glass-panel w-full rounded-xl px-4 py-2 flex items-center justify-between text-xs">
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="auto-flip" class="rounded border-gray-300 text-neutral-800 focus:ring-0">
+                <span>Putar papan otomatis setiap langkah (Auto-Flip)</span>
+            </label>
+            <span id="turn-indicator" class="font-medium bg-neutral-800 text-white px-2 py-0.5 rounded">Putih</span>
+        </div>
+
+        <div class="glass-panel p-2 rounded-3xl w-full aspect-square shadow-xl relative overflow-hidden">
+            <div id="board" class="w-full h-full grid grid-cols-8 grid-rows-8 rounded-2xl overflow-hidden transition-transform duration-500">
+                </div>
+        </div>
+        
+        <div class="w-full px-2 flex justify-between items-center text-xs text-neutral-400">
+            <div id="game-status">Sistem Siap. Giliran Putih.</div>
+        </div>
+
+    </div>
+
+    <script>
+        // Inisialisasi State Aplikasi
+        const game = new Chess();
+        let selectedSquare = null;
+        let autoFlipEnabled = false;
+        
+        // Pemetaan Bidak Catur Unicode (Clean & Minimalist)
+        const pieceUnicode = {
+            'p': '♟', 'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚',
+            'P': '♙', 'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔'
+        };
+
+        // Cache DOM Elements
+        const boardEl = document.getElementById('board');
+        const autoFlipCheck = document.getElementById('auto-flip');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const gameStatusEl = document.getElementById('game-status');
+        const btnFlip = document.getElementById('btn-flip');
+        const btnReset = document.getElementById('btn-reset');
+
+        // Generate Papan Catur Pertama Kali
+        function createBoardLayout() {
+            boardEl.innerHTML = '';
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const square = document.createElement('div');
+                    const file = String.fromCharCode(97 + c);
+                    const rank = 8 - r;
+                    const squareName = file + rank;
+                    
+                    square.id = `sq-${squareName}`;
+                    square.dataset.square = squareName;
+                    square.className = `w-full h-full flex items-center justify-center text-3xl md:text-4xl transition-all duration-150 relative ${(r + c) % 2 === 0 ? 'square-light' : 'square-dark'}`;
+                    
+                    square.addEventListener('click', () => handleSquareClick(squareName));
+                    boardEl.appendChild(square);
+                }
+            }
+        }
+
+        // Render Ulang Bidak Berdasarkan State Chess.js
+        function renderBoard() {
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const file = String.fromCharCode(97 + c);
+                    const rank = 8 - r;
+                    const squareName = file + rank;
+                    const squareEl = document.getElementById(`sq-${squareName}`);
+                    const piece = game.get(squareName);
+                    
+                    // Bersihkan sisa render sebelumnya (kecuali kelas dasar)
+                    squareEl.innerHTML = '';
+                    squareEl.classList.remove('square-selected', 'square-candidate', 'square-candidate-capture');
+                    
+                    if (piece) {
+                        const pieceEl = document.createElement('span');
+                        pieceEl.className = `piece text-notion-dark font-normal drop-shadow-sm select-none`;
+                        pieceEl.innerText = pieceUnicode[piece.color === 'w' ? piece.type.toUpperCase() : piece.type.toLowerCase()];
+                        
+                        if(piece.color === 'b') {
+                            pieceEl.classList.add('opacity-80'); // Bidak hitam sedikit lebih soft transparan
+                        }
+                        squareEl.appendChild(pieceEl);
+                    }
+                }
+            }
+            
+            // Re-highlight jika ada petak terpilih
+            if (selectedSquare) {
+                document.getElementById(`sq-${selectedSquare}`).classList.add('square-selected');
+                const moves = game.moves({ square: selectedSquare, verbose: true });
+                moves.forEach(m => {
+                    const targetSq = document.getElementById(`sq-${m.to}`);
+                    if (game.get(m.to)) {
+                        targetSq.classList.add('square-candidate-capture');
+                    } else {
+                        targetSq.classList.add('square-candidate');
+                    }
+                });
+            }
+        }
+
+        // Handler Klik Petak
+        function handleSquareClick(squareName) {
+            if (game.game_over()) return;
+
+            const piece = game.get(squareName);
+
+            if (selectedSquare === squareName) {
+                selectedSquare = null;
+                renderBoard();
+                return;
+            }
+
+            // Jika bidak sewarna diklik, ganti seleksi petak aktif
+            if (piece && piece.color === game.turn()) {
+                selectedSquare = squareName;
+                renderBoard();
+                return;
+            }
+
+            // Eksekusi Langkah jika petak tujuan valid
+            if (selectedSquare) {
+                const moves = game.moves({ square: selectedSquare, verbose: true });
+                const validMove = moves.find(m => m.to === squareName);
+
+                if (validMove) {
+                    // Eksekusi langkah (Auto-promote ke Queen)
+                    game.move({
+                        from: selectedSquare,
+                        to: squareName,
+                        promotion: 'q'
+                    });
+                    
+                    selectedSquare = null;
+                    renderBoard();
+                    updateStatus();
+
+                    if (game.game_over()) {
+                        handleGameOver();
+                        return;
+                    }
+
+                    // Fitur Auto-Flip jika diaktifkan
+                    if (autoFlipEnabled) {
+                        setTimeout(() => {
+                            boardEl.classList.toggle('flipped');
+                        }, 300);
+                    }
+                } else {
+                    selectedSquare = null;
+                    renderBoard();
+                }
+            }
+        }
+
+        // Update Panel Status & Indikator
+        function updateStatus() {
+            const turn = game.turn() === 'w' ? 'Putih' : 'Hitam';
+            turnIndicator.innerText = turn;
+            
+            if (game.in_check()) {
+                gameStatusEl.innerHTML = `<span class="text-amber-600 font-medium">Raja dalam posisi Skak!</span> Giliran ${turn}.`;
+            } else {
+                gameStatusEl.innerText = `Giliran ${turn}.`;
+            }
+        }
+
+        // Deteksi Akhir Permainan
+        function handleGameOver() {
+            if (game.in_checkmate()) {
+                const winner = game.turn() === 'w' ? 'Hitam' : 'Putih';
+                gameStatusEl.innerHTML = `<span class="text-red-500 font-semibold">Skakmat!</span> ${winner} Menang.`;
+            } else if (game.in_draw() || game.in_stalemate() || game.in_threefold_repetition()) {
+                gameStatusEl.innerHTML = `<span class="text-neutral-500 font-semibold">Remis (Draw)!</span> Permainan Berakhir.`;
+            }
+        }
+
+        // Event Listeners Kontrol UI
+        autoFlipCheck.addEventListener('change', (e) => {
+            autoFlipEnabled = e.target.checked;
+            if(!autoFlipEnabled) boardEl.classList.remove('flipped');
+        });
+
+        btnFlip.addEventListener('click', () => {
+            boardEl.classList.toggle('flipped');
+        });
+
+        btnReset.addEventListener('click', () => {
+            if(confirm('Mulai ulang papan permainan?')) {
+                game.reset();
+                selectedSquare = null;
+                boardEl.classList.remove('flipped');
+                renderBoard();
+                updateStatus();
+            }
+        });
+
+        // Bootstrap Aplikasi saat DOM Siap
+        window.addEventListener('DOMContentLoaded', () => {
+            createBoardLayout();
+            renderBoard();
+        });
+    </script>
+</body>
+</html>
